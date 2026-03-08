@@ -1,5 +1,9 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { mockWords } from '../mock/words';
+import { WordItem } from '../mock/words';
+
+type TodayScreenProps = {
+  words: WordItem[];
+};
 
 function getDateText(date: Date) {
   const year = date.getFullYear();
@@ -8,11 +12,11 @@ function getDateText(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
-export function TodayScreen() {
+export function TodayScreen({ words }: TodayScreenProps) {
   const today = getDateText(new Date());
-  const dueTodayCount = mockWords.filter((item) => item.nextReviewDate <= today).length;
-  const difficultCount = mockWords.filter((item) => item.isDifficult).length;
-  const learnedCount = mockWords.length;
+  const dueTodayCount = words.filter((item) => item.nextReviewDate <= today).length;
+  const difficultCount = words.filter((item) => item.isDifficult).length;
+  const learnedCount = words.length;
   const stats = [
     { label: '今日待复习', value: dueTodayCount },
     { label: '难词', value: difficultCount },

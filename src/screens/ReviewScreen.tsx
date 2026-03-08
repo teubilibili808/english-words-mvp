@@ -1,19 +1,23 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { useState } from 'react';
-import { mockWords } from '../mock/words';
+import { WordItem } from '../mock/words';
 
 const actions = ['Again', 'Hard', 'Good', 'Easy'];
+type ReviewScreenProps = {
+  words: WordItem[];
+};
 
-export function ReviewScreen() {
+export function ReviewScreen({ words }: ReviewScreenProps) {
   const [showMeaning, setShowMeaning] = useState(false);
-  const reviewWord = mockWords[0];
+  const reviewWord = words[0];
+  const hasWord = Boolean(reviewWord);
 
   return (
     <View style={styles.container}>
       <Pressable style={styles.card} onPress={() => setShowMeaning((prev) => !prev)}>
-        <Text style={styles.word}>{reviewWord.word}</Text>
-        <Text style={styles.hint}>点击卡片显示释义</Text>
-        {showMeaning ? <Text style={styles.meaning}>{reviewWord.meaning}</Text> : null}
+        <Text style={styles.word}>{hasWord ? reviewWord.word : '暂无单词'}</Text>
+        <Text style={styles.hint}>{hasWord ? '点击卡片显示释义' : '请先在 Add Word 页面新增单词'}</Text>
+        {showMeaning && hasWord ? <Text style={styles.meaning}>{reviewWord.meaning}</Text> : null}
       </Pressable>
 
       <View style={styles.actionRow}>

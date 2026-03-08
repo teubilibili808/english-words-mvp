@@ -1,21 +1,27 @@
-import { ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useMemo, useState } from 'react';
-import { mockWords } from '../mock/words';
+import { NavigationProp, useNavigation } from '@react-navigation/native';
+import { WordItem } from '../mock/words';
 
-export function WordsScreen() {
+type WordsScreenProps = {
+  words: WordItem[];
+};
+
+export function WordsScreen({ words }: WordsScreenProps) {
+  const navigation = useNavigation<NavigationProp<{ AddWord: { editWordId?: string } | undefined }>>();
   const [keyword, setKeyword] = useState('');
   const filteredWords = useMemo(() => {
     const normalizedKeyword = keyword.trim().toLowerCase();
     if (!normalizedKeyword) {
-      return mockWords;
+      return words;
     }
 
-    return mockWords.filter((item) => {
+    return words.filter((item) => {
       const wordText = item.word.toLowerCase();
       const meaningText = item.meaning.toLowerCase();
       return wordText.includes(normalizedKeyword) || meaningText.includes(normalizedKeyword);
     });
-  }, [keyword]);
+  }, [keyword, words]);
 
   return (
     <View style={styles.container}>
@@ -29,7 +35,11 @@ export function WordsScreen() {
 
       <ScrollView contentContainerStyle={styles.list} showsVerticalScrollIndicator={false}>
         {filteredWords.map((item) => (
-          <View key={item.id} style={styles.card}>
+          <Pressable
+            key={item.id}
+            style={styles.card}
+            onPress={() => navigation.navigate('AddWord', { editWordId: item.id })}
+          >
             <View style={styles.topRow}>
               <Text style={styles.word}>{item.word}</Text>
               <View style={styles.levelBadge}>
@@ -37,7 +47,7 @@ export function WordsScreen() {
               </View>
             </View>
             <Text style={styles.meaning}>{item.meaning}</Text>
-          </View>
+          </Pressable>
         ))}
       </ScrollView>
     </View>
