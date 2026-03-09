@@ -1,24 +1,18 @@
+import { NavigationProp, useNavigation } from '@react-navigation/native';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { WordItem } from '../mock/words';
 
 type TodayScreenProps = {
   words: WordItem[];
+  dueReviewCount: number;
 };
 
-function getDateText(date: Date) {
-  const year = date.getFullYear();
-  const month = `${date.getMonth() + 1}`.padStart(2, '0');
-  const day = `${date.getDate()}`.padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-export function TodayScreen({ words }: TodayScreenProps) {
-  const today = getDateText(new Date());
-  const dueTodayCount = words.filter((item) => item.nextReviewDate <= today).length;
+export function TodayScreen({ words, dueReviewCount }: TodayScreenProps) {
+  const navigation = useNavigation<NavigationProp<{ Review: undefined }>>();
   const difficultCount = words.filter((item) => item.isDifficult).length;
   const learnedCount = words.length;
   const stats = [
-    { label: '今日待复习', value: dueTodayCount },
+    { label: '今日待复习', value: dueReviewCount },
     { label: '难词', value: difficultCount },
     { label: '已学习', value: learnedCount },
   ];
@@ -34,7 +28,7 @@ export function TodayScreen({ words }: TodayScreenProps) {
         ))}
       </View>
 
-      <Pressable style={styles.button}>
+      <Pressable style={styles.button} onPress={() => navigation.navigate('Review')}>
         <Text style={styles.buttonText}>开始复习</Text>
       </Pressable>
 
