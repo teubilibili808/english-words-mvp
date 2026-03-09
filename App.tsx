@@ -3,8 +3,8 @@ import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
 import { useEffect, useState } from 'react';
-import { WordItem, mockWords } from './src/mock/words';
-import { buildReviewQueue } from './src/review/reviewQueue';
+import { WordItem, WordLevel, mockWords, normalizeWordItem } from './src/mock/words';
+import { buildOverflowQueue, buildReviewQueue, calculateRememberedInterval } from './src/review/reviewQueue';
 import { AddWordScreen } from './src/screens/AddWordScreen';
 import { ReviewScreen } from './src/screens/ReviewScreen';
 import { TodayScreen } from './src/screens/TodayScreen';
@@ -20,9 +20,11 @@ type RootTabParamList = {
 const Tab = createBottomTabNavigator<RootTabParamList>();
 const WORDS_STORAGE_KEY = 'english-words-mvp:words';
 const REVIEW_SESSION_STORAGE_KEY = 'english-words-mvp:review-session';
+const OVERFLOW_BATCH_SIZE = 5;
 
 type ReviewSession = {
   queueIds: string[];
+  overflowQueueIds: string[];
   currentIndex: number;
   rememberedCount: number;
   forgottenCount: number;
@@ -43,7 +45,7 @@ function addDays(baseDate: Date, days: number) {
 }
 
 export default function App() {
-  const [words, setWords] = useState<WordItem[]>(mockWords);
+  const [words, setWords] = useState<WordItem[]>(mockWords.map((item) => normalizeWordItem(item)));
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
   const [isDataLoaded, setIsDataLoaded] = useState(false);
 
@@ -53,13 +55,36 @@ export default function App() {
       try {
         const rawWords = await AsyncStorage.getItem(WORDS_STORAGE_KEY);
         if (!rawWords) {
-          setWords(mockWords);
+          setWords(mockWords.map((item) => normalizeWordItem(item)));
         } else {
           const parsedWords = JSON.parse(rawWords);
           if (Array.isArray(parsedWords)) {
-            setWords(parsedWords as WordItem[]);
+            const migratedWords = parsedWords
+              .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+              .map((item) => {
+                const normalizedLevel: WordLevel =
+                  item.level === 'A' || item.level === 'B' || item.level === 'C' ? item.level : 'B';
+                const baseWord = {
+                  id: String(item.id ?? ''),
+                  word: String(item.word ?? ''),
+                  meaning: String(item.meaning ?? ''),
+                  level: normalizedLevel,
+                  isDifficult: Boolean(item.isDifficult),
+                  note: String(item.note ?? ''),
+                  nextReviewDate: String(item.nextReviewDate ?? getDateText(new Date())),
+                };
+                return normalizeWordItem({
+                  ...baseWord,
+                  memoryLevel: item.memoryLevel as number | undefined,
+                  forgetStreak: item.forgetStreak as number | undefined,
+                  lastReviewedDate: (item.lastReviewedDate as string | null | undefined) ?? null,
+                  reviewCount: item.reviewCount as number | undefined,
+                });
+              })
+              .filter((item) => item.id && item.word);
+            setWords(migratedWords.length > 0 ? migratedWords : mockWords.map((item) => normalizeWordItem(item)));
           } else {
-            setWords(mockWords);
+            setWords(mockWords.map((item) => normalizeWordItem(item)));
           }
         }
 
@@ -71,16 +96,17 @@ export default function App() {
           const isValidSession =
             parsedSession &&
             Array.isArray(parsedSession.queueIds) &&
+            Array.isArray(parsedSession.overflowQueueIds) &&
             typeof parsedSession.currentIndex === 'number' &&
             typeof parsedSession.rememberedCount === 'number' &&
             typeof parsedSession.forgottenCount === 'number' &&
             typeof parsedSession.date === 'string' &&
             parsedSession.date === today &&
-            parsedSession.currentIndex < parsedSession.queueIds.length;
+            parsedSession.currentIndex <= parsedSession.queueIds.length;
           setReviewSession(isValidSession ? parsedSession : null);
         }
       } catch {
-        setWords(mockWords);
+        setWords(mockWords.map((item) => normalizeWordItem(item)));
         setReviewSession(null);
       } finally {
         setIsDataLoaded(true);
@@ -138,17 +164,22 @@ export default function App() {
   const ensureTodayReviewSession = () => {
     const today = getDateText(new Date());
     setReviewSession((prev) => {
-      if (prev && prev.date === today && prev.currentIndex < prev.queueIds.length) {
+      if (prev && prev.date === today) {
         return prev;
       }
 
-      const queueIds = buildReviewQueue(words).map((item) => item.id);
+      const queue = buildReviewQueue(words);
+      const queueIds = queue.map((item) => item.id);
+      const overflowQueueIds = buildOverflowQueue(words, queueIds).map((item) => item.id);
       if (queueIds.length === 0) {
-        return null;
+        if (overflowQueueIds.length === 0) {
+          return null;
+        }
       }
 
       return {
         queueIds,
+        overflowQueueIds,
         currentIndex: 0,
         rememberedCount: 0,
         forgottenCount: 0,
@@ -157,12 +188,53 @@ export default function App() {
     });
   };
 
+  const appendOverflowBatch = () => {
+    setReviewSession((prev) => {
+      if (!prev || prev.overflowQueueIds.length === 0) {
+        return prev;
+      }
+
+      const batchCount = Math.min(OVERFLOW_BATCH_SIZE, prev.overflowQueueIds.length);
+      const appendIds = prev.overflowQueueIds.slice(0, batchCount);
+      return {
+        ...prev,
+        queueIds: [...prev.queueIds, ...appendIds],
+        overflowQueueIds: prev.overflowQueueIds.slice(batchCount),
+      };
+    });
+  };
+
   const handleSubmitReviewResult = (wordId: string, remembered: boolean) => {
-    const daysToAdd = remembered ? 3 : 1;
-    const nextReviewDate = getDateText(addDays(new Date(), daysToAdd));
+    const today = getDateText(new Date());
 
     setWords((prev) =>
-      prev.map((item) => (item.id === wordId ? { ...item, nextReviewDate } : item))
+      prev.map((item) => {
+        if (item.id !== wordId) {
+          return item;
+        }
+
+        if (!remembered) {
+          return {
+            ...item,
+            memoryLevel: 1,
+            forgetStreak: item.forgetStreak + 1,
+            reviewCount: item.reviewCount + 1,
+            lastReviewedDate: today,
+            nextReviewDate: getDateText(addDays(new Date(), 1)),
+          };
+        }
+
+        const nextMemoryLevel = Math.min(item.memoryLevel + 1, 5);
+        const interval = calculateRememberedInterval(nextMemoryLevel, item.level);
+        return {
+          ...item,
+          memoryLevel: nextMemoryLevel,
+          forgetStreak: Math.max(item.forgetStreak - 1, 0),
+          reviewCount: item.reviewCount + 1,
+          lastReviewedDate: today,
+          nextReviewDate: getDateText(addDays(new Date(), interval)),
+        };
+      })
     );
 
     setReviewSession((prev) => {
@@ -174,7 +246,7 @@ export default function App() {
       const nextRemembered = prev.rememberedCount + (remembered ? 1 : 0);
       const nextForgotten = prev.forgottenCount + (remembered ? 0 : 1);
 
-      if (nextIndex >= prev.queueIds.length) {
+      if (nextIndex >= prev.queueIds.length && prev.overflowQueueIds.length === 0) {
         return null;
       }
 
@@ -195,6 +267,8 @@ export default function App() {
   const dueReviewCount = hasActiveTodaySession
     ? reviewSession.queueIds.length - reviewSession.currentIndex
     : buildReviewQueue(words).length;
+  const todayRememberedCount = hasActiveTodaySession ? reviewSession.rememberedCount : 0;
+  const todayForgottenCount = hasActiveTodaySession ? reviewSession.forgottenCount : 0;
 
   return (
     <NavigationContainer>
@@ -223,7 +297,14 @@ export default function App() {
         }}
       >
         <Tab.Screen name="Today" options={{ title: 'Today' }}>
-          {() => <TodayScreen words={words} dueReviewCount={dueReviewCount} />}
+          {() => (
+            <TodayScreen
+              words={words}
+              dueReviewCount={dueReviewCount}
+              rememberedCount={todayRememberedCount}
+              forgottenCount={todayForgottenCount}
+            />
+          )}
         </Tab.Screen>
         <Tab.Screen name="Words" options={{ title: 'Words' }}>
           {() => <WordsScreen words={words} />}
@@ -246,7 +327,9 @@ export default function App() {
             <ReviewScreen
               words={words}
               reviewSession={reviewSession}
+              overflowBatchSize={OVERFLOW_BATCH_SIZE}
               onEnsureSession={ensureTodayReviewSession}
+              onAppendOverflowBatch={appendOverflowBatch}
               onSubmitReviewResult={handleSubmitReviewResult}
             />
           )}

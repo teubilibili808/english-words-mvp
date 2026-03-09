@@ -5,9 +5,11 @@ import { WordItem } from '../mock/words';
 type TodayScreenProps = {
   words: WordItem[];
   dueReviewCount: number;
+  rememberedCount: number;
+  forgottenCount: number;
 };
 
-export function TodayScreen({ words, dueReviewCount }: TodayScreenProps) {
+export function TodayScreen({ words, dueReviewCount, rememberedCount, forgottenCount }: TodayScreenProps) {
   const navigation = useNavigation<NavigationProp<{ Review: undefined }>>();
   const difficultCount = words.filter((item) => item.isDifficult).length;
   const learnedCount = words.length;
@@ -26,6 +28,13 @@ export function TodayScreen({ words, dueReviewCount }: TodayScreenProps) {
             <Text style={styles.value}>{item.value}</Text>
           </View>
         ))}
+      </View>
+
+      <View style={styles.card}>
+        <View style={styles.row}>
+          <Text style={styles.label}>今日已完成小计</Text>
+          <Text style={styles.subValue}>记得 {rememberedCount} / 不记得 {forgottenCount}</Text>
+        </View>
       </View>
 
       <Pressable style={styles.button} onPress={() => navigation.navigate('Review')}>
@@ -67,6 +76,11 @@ const styles = StyleSheet.create({
     fontSize: 24,
     fontWeight: '700',
     color: '#111827',
+  },
+  subValue: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#374151',
   },
   button: {
     minHeight: 52,

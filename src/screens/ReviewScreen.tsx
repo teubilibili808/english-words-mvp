@@ -7,12 +7,15 @@ type ReviewScreenProps = {
   words: WordItem[];
   reviewSession: {
     queueIds: string[];
+    overflowQueueIds: string[];
     currentIndex: number;
     rememberedCount: number;
     forgottenCount: number;
     date: string;
   } | null;
+  overflowBatchSize: number;
   onEnsureSession: () => void;
+  onAppendOverflowBatch: () => void;
   onSubmitReviewResult: (wordId: string, remembered: boolean) => void;
 };
 
@@ -21,11 +24,14 @@ type ReviewChoice = 'remembered' | 'forgotten';
 export function ReviewScreen({
   words,
   reviewSession,
+  overflowBatchSize,
   onEnsureSession,
+  onAppendOverflowBatch,
   onSubmitReviewResult,
 }: ReviewScreenProps) {
   const [showAnswer, setShowAnswer] = useState(false);
   const [currentChoice, setCurrentChoice] = useState<ReviewChoice | null>(null);
+  const [dismissOverflowPrompt, setDismissOverflowPrompt] = useState(false);
   const [completedSummary, setCompletedSummary] = useState<{
     total: number;
     remembered: number;
@@ -41,6 +47,7 @@ export function ReviewScreen({
     useCallback(() => {
       onEnsureSession();
       clearCurrentChoice();
+      setDismissOverflowPrompt(false);
       setCompletedSummary(null);
     }, [clearCurrentChoice, onEnsureSession])
   );
@@ -53,8 +60,12 @@ export function ReviewScreen({
     return words.find((item) => item.id === currentWordId);
   }, [reviewSession, words]);
 
-  const hasQueue = Boolean(reviewSession && reviewSession.queueIds.length > 0);
-  const isCompleted = Boolean(completedSummary) && !reviewSession;
+  const hasQueue = Boolean(
+    reviewSession && reviewSession.currentIndex < reviewSession.queueIds.length
+  );
+  const overflowCount = reviewSession?.overflowQueueIds.length ?? 0;
+  const shouldShowOverflowPrompt = overflowCount > 0 && !dismissOverflowPrompt;
+  const isCompleted = Boolean(completedSummary) && !hasQueue;
 
   const handlePick = (choice: ReviewChoice) => {
     setCurrentChoice(choice);
@@ -95,6 +106,32 @@ export function ReviewScreen({
           {completedSummary ? <Text style={styles.summary}>本次复习总数：{completedSummary.total}</Text> : null}
           {completedSummary ? <Text style={styles.summary}>记得：{completedSummary.remembered}</Text> : null}
           {completedSummary ? <Text style={styles.summary}>不记得：{completedSummary.forgotten}</Text> : null}
+        </View>
+      ) : null}
+
+      {shouldShowOverflowPrompt ? (
+        <View style={styles.promptCard}>
+          <Text style={styles.promptText}>
+            你还有 {overflowCount} 个积压单词，是否追加复习？（每次最多 {overflowBatchSize} 个）
+          </Text>
+          <View style={styles.promptRow}>
+            <Pressable
+              style={styles.promptPrimaryButton}
+              onPress={() => {
+                onAppendOverflowBatch();
+                setCompletedSummary(null);
+                setDismissOverflowPrompt(false);
+              }}
+            >
+              <Text style={styles.promptPrimaryText}>追加复习</Text>
+            </Pressable>
+            <Pressable
+              style={styles.promptSecondaryButton}
+              onPress={() => setDismissOverflowPrompt(true)}
+            >
+              <Text style={styles.promptSecondaryText}>暂不追加</Text>
+            </Pressable>
+          </View>
         </View>
       ) : null}
 
@@ -194,6 +231,51 @@ const styles = StyleSheet.create({
   summary: {
     fontSize: 15,
     color: '#4b5563',
+  },
+  promptCard: {
+    borderRadius: 14,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+    padding: 14,
+    gap: 10,
+  },
+  promptText: {
+    fontSize: 14,
+    color: '#4b5563',
+    lineHeight: 20,
+  },
+  promptRow: {
+    flexDirection: 'row',
+    gap: 10,
+  },
+  promptPrimaryButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    backgroundColor: '#111827',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  promptPrimaryText: {
+    color: '#ffffff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  promptSecondaryButton: {
+    flex: 1,
+    minHeight: 44,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ffffff',
+  },
+  promptSecondaryText: {
+    color: '#374151',
+    fontSize: 14,
+    fontWeight: '600',
   },
   actionRow: {
     flexDirection: 'row',

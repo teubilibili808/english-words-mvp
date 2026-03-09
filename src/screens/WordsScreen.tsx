@@ -38,6 +38,8 @@ export function WordsScreen({ words }: WordsScreenProps) {
         onChangeText={setKeyword}
       />
 
+      <Text style={styles.hintText}>点击词条可查看详情并编辑</Text>
+
       <View style={styles.filterRow}>
         {levelFilters.map((level) => {
           const isSelected = levelFilter === level;
@@ -74,6 +76,10 @@ export function WordsScreen({ words }: WordsScreenProps) {
               </View>
             </View>
             <Text style={styles.meaning}>{item.meaning}</Text>
+            <Text style={styles.metaText}>
+              ML {item.memoryLevel} · FS {item.forgetStreak} · RC {item.reviewCount} · LR{' '}
+              {item.lastReviewedDate ?? '--'}
+            </Text>
           </Pressable>
         ))}
       </ScrollView>
@@ -97,6 +103,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#ffffff',
     fontSize: 16,
     color: '#111827',
+  },
+  hintText: {
+    fontSize: 13,
+    color: '#9ca3af',
   },
   list: {
     gap: 10,
@@ -163,6 +173,10 @@ const styles = StyleSheet.create({
   meaning: {
     fontSize: 16,
     color: '#4b5563',
+  },
+  metaText: {
+    fontSize: 12,
+    color: '#6b7280',
   },
   emptyState: {
     borderRadius: 14,

@@ -102,6 +102,10 @@ export function AddWordScreen({ words, editWordId, onAddWord, onUpdateWord }: Ad
       isDifficult: false,
       note: note.trim(),
       nextReviewDate: getDateText(new Date()),
+      memoryLevel: 1,
+      forgetStreak: 0,
+      lastReviewedDate: null,
+      reviewCount: 0,
     };
 
     onAddWord(newWord);
@@ -171,6 +175,16 @@ export function AddWordScreen({ words, editWordId, onAddWord, onUpdateWord }: Ad
             onChangeText={setNote}
           />
         </View>
+
+        {isEditMode && editingWord ? (
+          <View style={styles.debugCard}>
+            <Text style={styles.debugTitle}>复习字段（只读）</Text>
+            <Text style={styles.debugText}>memoryLevel: {editingWord.memoryLevel}</Text>
+            <Text style={styles.debugText}>forgetStreak: {editingWord.forgetStreak}</Text>
+            <Text style={styles.debugText}>reviewCount: {editingWord.reviewCount}</Text>
+            <Text style={styles.debugText}>lastReviewedDate: {editingWord.lastReviewedDate ?? '--'}</Text>
+          </View>
+        ) : null}
 
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
         {successMessage ? <Text style={styles.successText}>{successMessage}</Text> : null}
@@ -254,6 +268,24 @@ const styles = StyleSheet.create({
   successText: {
     fontSize: 14,
     color: '#166534',
+  },
+  debugCard: {
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#e5e7eb',
+    backgroundColor: '#ffffff',
+    padding: 12,
+    gap: 4,
+  },
+  debugTitle: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 4,
+  },
+  debugText: {
+    fontSize: 13,
+    color: '#6b7280',
   },
   saveButton: {
     minHeight: 52,
