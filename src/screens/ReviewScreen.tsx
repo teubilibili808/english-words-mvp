@@ -16,7 +16,7 @@ type ReviewScreenProps = {
   overflowBatchSize: number;
   onEnsureSession: () => void;
   onAppendOverflowBatch: () => void;
-  onSubmitReviewResult: (wordId: string, remembered: boolean) => void;
+  onSubmitReviewResult: (wordId: string, remembered: boolean) => Promise<void>;
 };
 
 type ReviewChoice = 'remembered' | 'forgotten';
@@ -32,6 +32,8 @@ export function ReviewScreen({
   const [showAnswer, setShowAnswer] = useState(false);
   const [currentChoice, setCurrentChoice] = useState<ReviewChoice | null>(null);
   const [dismissOverflowPrompt, setDismissOverflowPrompt] = useState(false);
+  const [errorMessage, setErrorMessage] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
   const [completedSummary, setCompletedSummary] = useState<{
     total: number;
     remembered: number;
@@ -41,6 +43,7 @@ export function ReviewScreen({
   const clearCurrentChoice = useCallback(() => {
     setShowAnswer(false);
     setCurrentChoice(null);
+    setErrorMessage('');
   }, []);
 
   useFocusEffect(
@@ -72,7 +75,7 @@ export function ReviewScreen({
     setShowAnswer(true);
   };
 
-  const handleNext = () => {
+  const handleNext = async () => {
     if (!currentWord || !currentChoice || !reviewSession) {
       return;
     }
@@ -91,12 +94,24 @@ export function ReviewScreen({
       });
     }
 
-    onSubmitReviewResult(currentWord.id, remembered);
-    clearCurrentChoice();
+    setIsSubmitting(true);
+
+    try {
+      await onSubmitReviewResult(currentWord.id, remembered);
+      clearCurrentChoice();
+    } catch (error) {
+      if (isFinalCard) {
+        setCompletedSummary(null);
+      }
+      setErrorMessage(error instanceof Error ? error.message : '复习结果保存失败，请重试');
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   return (
     <View style={styles.container}>
+      <View style={styles.panel}>
       {!hasQueue ? (
         <View style={styles.card}>
           <Text style={styles.word}>{isCompleted ? '今日复习完成' : '暂无待复习单词'}</Text>
@@ -148,6 +163,7 @@ export function ReviewScreen({
                 <Text style={styles.meaning}>{currentWord.meaning}</Text>
                 {currentWord.note ? <Text style={styles.note}>Note: {currentWord.note}</Text> : null}
                 <Text style={styles.level}>Level: {currentWord.level}</Text>
+                {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
               </>
             ) : null}
           </View>
@@ -162,8 +178,12 @@ export function ReviewScreen({
               </Pressable>
             </View>
           ) : (
-            <Pressable style={styles.nextButton} onPress={handleNext}>
-              <Text style={styles.nextButtonText}>下一张</Text>
+            <Pressable
+              style={[styles.nextButton, isSubmitting ? styles.nextButtonDisabled : null]}
+              onPress={() => void handleNext()}
+              disabled={isSubmitting}
+            >
+              <Text style={styles.nextButtonText}>{isSubmitting ? '保存中...' : '下一张'}</Text>
             </Pressable>
           )}
         </>
@@ -176,6 +196,7 @@ export function ReviewScreen({
           </Pressable>
         </View>
       )}
+      </View>
     </View>
   );
 }
@@ -184,28 +205,39 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#ffffff',
-    padding: 20,
+    paddingHorizontal: 18,
+    paddingVertical: 18,
+  },
+  panel: {
+    flex: 1,
+    width: '100%',
+    maxWidth: 480,
+    alignSelf: 'center',
     justifyContent: 'space-between',
+    gap: 16,
   },
   card: {
     backgroundColor: '#ffffff',
-    borderRadius: 16,
+    borderRadius: 18,
     borderWidth: 1,
     borderColor: '#e5e7eb',
-    minHeight: 280,
+    minHeight: 320,
     alignItems: 'center',
     justifyContent: 'center',
-    padding: 20,
-    gap: 10,
+    padding: 24,
+    gap: 12,
   },
   word: {
-    fontSize: 34,
+    fontSize: 38,
     fontWeight: '700',
     color: '#111827',
+    textAlign: 'center',
   },
   hint: {
     fontSize: 14,
     color: '#9ca3af',
+    textAlign: 'center',
+    lineHeight: 20,
   },
   meaning: {
     marginTop: 8,
@@ -224,6 +256,12 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#6b7280',
   },
+  errorText: {
+    marginTop: 8,
+    fontSize: 14,
+    color: '#b91c1c',
+    textAlign: 'center',
+  },
   progress: {
     fontSize: 14,
     color: '#9ca3af',
@@ -231,14 +269,15 @@ const styles = StyleSheet.create({
   summary: {
     fontSize: 15,
     color: '#4b5563',
+    lineHeight: 22,
   },
   promptCard: {
-    borderRadius: 14,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#e5e7eb',
     backgroundColor: '#ffffff',
-    padding: 14,
-    gap: 10,
+    padding: 16,
+    gap: 12,
   },
   promptText: {
     fontSize: 14,
@@ -246,12 +285,11 @@ const styles = StyleSheet.create({
     lineHeight: 20,
   },
   promptRow: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 10,
   },
   promptPrimaryButton: {
-    flex: 1,
-    minHeight: 44,
+    minHeight: 50,
     borderRadius: 10,
     backgroundColor: '#111827',
     alignItems: 'center',
@@ -263,8 +301,7 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   promptSecondaryButton: {
-    flex: 1,
-    minHeight: 44,
+    minHeight: 50,
     borderRadius: 10,
     borderWidth: 1,
     borderColor: '#d1d5db',
@@ -278,13 +315,12 @@ const styles = StyleSheet.create({
     fontWeight: '600',
   },
   actionRow: {
-    flexDirection: 'row',
+    flexDirection: 'column',
     gap: 10,
-    marginBottom: 12,
+    marginBottom: 16,
   },
   actionButton: {
-    flex: 1,
-    minHeight: 52,
+    minHeight: 56,
     borderRadius: 12,
     borderWidth: 1,
     borderColor: '#d1d5db',
@@ -298,7 +334,7 @@ const styles = StyleSheet.create({
     color: '#111827',
   },
   nextButton: {
-    minHeight: 52,
+    minHeight: 56,
     borderRadius: 12,
     backgroundColor: '#111827',
     alignItems: 'center',
@@ -306,12 +342,15 @@ const styles = StyleSheet.create({
     marginBottom: 12,
     paddingHorizontal: 16,
   },
+  nextButtonDisabled: {
+    opacity: 0.7,
+  },
   nextButtonText: {
     fontSize: 16,
     fontWeight: '600',
     color: '#ffffff',
   },
   footer: {
-    marginBottom: 12,
+    marginBottom: 8,
   },
 });

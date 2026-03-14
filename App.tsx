@@ -2,17 +2,23 @@ import { NavigationContainer } from '@react-navigation/native';
 import { createBottomTabNavigator } from '@react-navigation/bottom-tabs';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { StatusBar } from 'expo-status-bar';
-import { useEffect, useState } from 'react';
-import { WordItem, WordLevel, mockWords, normalizeWordItem } from './src/mock/words';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AuthProvider, useAuth } from './src/context/AuthContext';
+import { WordItem, WordLevel, normalizeWordItem } from './src/mock/words';
 import { buildOverflowQueue, buildReviewQueue, calculateRememberedInterval } from './src/review/reviewQueue';
 import { AddWordScreen } from './src/screens/AddWordScreen';
+import { HistoryScreen } from './src/screens/HistoryScreen';
+import { LoginScreen } from './src/screens/LoginScreen';
+import { RegisterScreen } from './src/screens/RegisterScreen';
 import { ReviewScreen } from './src/screens/ReviewScreen';
 import { TodayScreen } from './src/screens/TodayScreen';
 import { WordsScreen } from './src/screens/WordsScreen';
+import { apiGet, apiPatch, apiPost } from './src/utils/apiClient';
 
 type RootTabParamList = {
   Today: undefined;
   Words: undefined;
+  History: undefined;
   AddWord: { editWordId?: string } | undefined;
   Review: undefined;
 };
@@ -20,7 +26,13 @@ type RootTabParamList = {
 const Tab = createBottomTabNavigator<RootTabParamList>();
 const WORDS_STORAGE_KEY = 'english-words-mvp:words';
 const REVIEW_SESSION_STORAGE_KEY = 'english-words-mvp:review-session';
+const REVIEW_HISTORY_STORAGE_KEY = 'english-words-mvp:review-history';
 const OVERFLOW_BATCH_SIZE = 5;
+const WORDS_RELATED_STORAGE_KEYS = [
+  WORDS_STORAGE_KEY,
+  REVIEW_SESSION_STORAGE_KEY,
+  REVIEW_HISTORY_STORAGE_KEY,
+];
 
 type ReviewSession = {
   queueIds: string[];
@@ -29,6 +41,41 @@ type ReviewSession = {
   rememberedCount: number;
   forgottenCount: number;
   date: string;
+};
+
+type ReviewHistoryItem = {
+  date: string;
+  rememberedCount: number;
+  forgottenCount: number;
+};
+
+type ApiWordItem = {
+  id: number | string;
+  word: string;
+  meaning: string;
+  level: WordLevel;
+  isDifficult: boolean | number;
+  note: string;
+  nextReviewDate: string;
+  memoryLevel?: number;
+  forgetStreak?: number;
+  lastReviewedDate?: string | null;
+  reviewCount?: number;
+};
+
+type ReviewUpdatePayload = Pick<
+  WordItem,
+  'memoryLevel' | 'forgetStreak' | 'reviewCount' | 'lastReviewedDate' | 'nextReviewDate' | 'isDifficult'
+> & {
+  wordId: number;
+};
+
+type WordUpdatePayload = {
+  word?: string;
+  meaning?: string;
+  level?: WordLevel;
+  note?: string;
+  isDifficult?: boolean;
 };
 
 function getDateText(date: Date) {
@@ -44,50 +91,27 @@ function addDays(baseDate: Date, days: number) {
   return next;
 }
 
-export default function App() {
-  const [words, setWords] = useState<WordItem[]>(mockWords.map((item) => normalizeWordItem(item)));
+function MainApp() {
+  const { user, isAuthLoaded } = useAuth();
+  const [authMode, setAuthMode] = useState<'login' | 'register'>('login');
+
+  const [words, setWords] = useState<WordItem[]>([]);
   const [reviewSession, setReviewSession] = useState<ReviewSession | null>(null);
-  const [isDataLoaded, setIsDataLoaded] = useState(false);
+  const [reviewHistory, setReviewHistory] = useState<ReviewHistoryItem[]>([]);
+  const [isLocalStateLoaded, setIsLocalStateLoaded] = useState(false);
+  const [isWordsLoaded, setIsWordsLoaded] = useState(false);
+  const previousUsernameRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!user) {
+      setAuthMode('login');
+    }
+  }, [user]);
 
   useEffect(() => {
     const loadDataFromStorage = async () => {
       const today = getDateText(new Date());
       try {
-        const rawWords = await AsyncStorage.getItem(WORDS_STORAGE_KEY);
-        if (!rawWords) {
-          setWords(mockWords.map((item) => normalizeWordItem(item)));
-        } else {
-          const parsedWords = JSON.parse(rawWords);
-          if (Array.isArray(parsedWords)) {
-            const migratedWords = parsedWords
-              .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
-              .map((item) => {
-                const normalizedLevel: WordLevel =
-                  item.level === 'A' || item.level === 'B' || item.level === 'C' ? item.level : 'B';
-                const baseWord = {
-                  id: String(item.id ?? ''),
-                  word: String(item.word ?? ''),
-                  meaning: String(item.meaning ?? ''),
-                  level: normalizedLevel,
-                  isDifficult: Boolean(item.isDifficult),
-                  note: String(item.note ?? ''),
-                  nextReviewDate: String(item.nextReviewDate ?? getDateText(new Date())),
-                };
-                return normalizeWordItem({
-                  ...baseWord,
-                  memoryLevel: item.memoryLevel as number | undefined,
-                  forgetStreak: item.forgetStreak as number | undefined,
-                  lastReviewedDate: (item.lastReviewedDate as string | null | undefined) ?? null,
-                  reviewCount: item.reviewCount as number | undefined,
-                });
-              })
-              .filter((item) => item.id && item.word);
-            setWords(migratedWords.length > 0 ? migratedWords : mockWords.map((item) => normalizeWordItem(item)));
-          } else {
-            setWords(mockWords.map((item) => normalizeWordItem(item)));
-          }
-        }
-
         const rawSession = await AsyncStorage.getItem(REVIEW_SESSION_STORAGE_KEY);
         if (!rawSession) {
           setReviewSession(null);
@@ -105,11 +129,31 @@ export default function App() {
             parsedSession.currentIndex <= parsedSession.queueIds.length;
           setReviewSession(isValidSession ? parsedSession : null);
         }
+
+        const rawHistory = await AsyncStorage.getItem(REVIEW_HISTORY_STORAGE_KEY);
+        if (!rawHistory) {
+          setReviewHistory([]);
+        } else {
+          const parsedHistory = JSON.parse(rawHistory);
+          if (Array.isArray(parsedHistory)) {
+            const normalizedHistory = parsedHistory
+              .filter((item): item is Record<string, unknown> => typeof item === 'object' && item !== null)
+              .map((item) => ({
+                date: String(item.date ?? ''),
+                rememberedCount: Math.max(Number(item.rememberedCount ?? 0), 0),
+                forgottenCount: Math.max(Number(item.forgottenCount ?? 0), 0),
+              }))
+              .filter((item) => item.date);
+            setReviewHistory(normalizedHistory);
+          } else {
+            setReviewHistory([]);
+          }
+        }
       } catch {
-        setWords(mockWords.map((item) => normalizeWordItem(item)));
         setReviewSession(null);
+        setReviewHistory([]);
       } finally {
-        setIsDataLoaded(true);
+        setIsLocalStateLoaded(true);
       }
     };
 
@@ -117,28 +161,17 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!isDataLoaded) {
-      return;
-    }
-
-    const saveWordsToStorage = async () => {
-      try {
-        await AsyncStorage.setItem(WORDS_STORAGE_KEY, JSON.stringify(words));
-      } catch {
-        // Keep UI usable even if local storage write fails.
-      }
-    };
-
-    void saveWordsToStorage();
-  }, [isDataLoaded, words]);
-
-  useEffect(() => {
-    if (!isDataLoaded) {
+    if (!isLocalStateLoaded) {
       return;
     }
 
     const saveSessionToStorage = async () => {
       try {
+        if (!user) {
+          await AsyncStorage.removeItem(REVIEW_SESSION_STORAGE_KEY);
+          return;
+        }
+
         if (!reviewSession) {
           await AsyncStorage.removeItem(REVIEW_SESSION_STORAGE_KEY);
           return;
@@ -151,15 +184,182 @@ export default function App() {
     };
 
     void saveSessionToStorage();
-  }, [isDataLoaded, reviewSession]);
+  }, [isLocalStateLoaded, reviewSession, user]);
 
-  const handleAddWord = (newWord: WordItem) => {
-    setWords((prev) => [newWord, ...prev]);
-  };
+  useEffect(() => {
+    if (!isLocalStateLoaded) {
+      return;
+    }
 
-  const handleUpdateWord = (updatedWord: WordItem) => {
-    setWords((prev) => prev.map((item) => (item.id === updatedWord.id ? updatedWord : item)));
-  };
+    const saveHistoryToStorage = async () => {
+      try {
+        if (!user) {
+          await AsyncStorage.removeItem(REVIEW_HISTORY_STORAGE_KEY);
+          return;
+        }
+
+        await AsyncStorage.setItem(REVIEW_HISTORY_STORAGE_KEY, JSON.stringify(reviewHistory));
+      } catch {
+        // Keep UI usable even if local storage write fails.
+      }
+    };
+
+    void saveHistoryToStorage();
+  }, [isLocalStateLoaded, reviewHistory, user]);
+
+  const handleClearLocalWordState = useCallback(async () => {
+    setWords([]);
+    setReviewSession(null);
+    setReviewHistory([]);
+
+    try {
+      await AsyncStorage.multiRemove(WORDS_RELATED_STORAGE_KEYS);
+    } catch {
+      // Ignore local cleanup errors and keep auth state usable.
+    }
+  }, []);
+
+  const handleSyncWordsFromApi = useCallback(async () => {
+    const result = await apiGet<{ success: boolean; words: ApiWordItem[] }>('/words');
+    const fetchedWords = Array.isArray(result.words)
+      ? result.words.map((item) =>
+          normalizeWordItem({
+            id: String(item.id),
+            word: item.word,
+            meaning: item.meaning,
+            level: item.level,
+            isDifficult: Boolean(item.isDifficult),
+            note: item.note ?? '',
+            nextReviewDate: item.nextReviewDate,
+            memoryLevel: item.memoryLevel,
+            forgetStreak: item.forgetStreak,
+            lastReviewedDate: item.lastReviewedDate ?? null,
+            reviewCount: item.reviewCount,
+          })
+        )
+      : [];
+    setWords(fetchedWords);
+    setReviewSession((prev) => {
+      if (!prev) {
+        return null;
+      }
+
+      const validIds = new Set(fetchedWords.map((item) => item.id));
+      const queueIds = prev.queueIds.filter((id) => validIds.has(id));
+      const overflowQueueIds = prev.overflowQueueIds.filter((id) => validIds.has(id));
+      const nextIndex = Math.min(prev.currentIndex, queueIds.length);
+
+      if (queueIds.length === 0 && overflowQueueIds.length === 0) {
+        return null;
+      }
+
+      return {
+        ...prev,
+        queueIds,
+        overflowQueueIds,
+        currentIndex: nextIndex,
+      };
+    });
+  }, []);
+
+  const handleCreateWordFromApi = useCallback(
+    async (payload: { word: string; meaning: string; level: WordLevel; note: string; isDifficult: boolean }) => {
+      await apiPost(
+        '/words',
+        {
+          word: payload.word,
+          meaning: payload.meaning,
+          level: payload.level,
+          note: payload.note,
+          isDifficult: payload.isDifficult,
+        },
+        true
+      );
+    },
+    []
+  );
+
+  const handleUpdateWordFromApi = useCallback(
+    async (wordId: string, payload: WordUpdatePayload) => {
+      await apiPatch(`/words/${wordId}`, payload, true);
+      await handleSyncWordsFromApi();
+    },
+    [handleSyncWordsFromApi]
+  );
+
+  const handleToggleWordDifficultFromApi = useCallback(
+    async (wordId: string, isDifficult: boolean) => {
+      await apiPatch(
+        `/words/${wordId}`,
+        {
+          isDifficult,
+        },
+        true
+      );
+      await handleSyncWordsFromApi();
+    },
+    [handleSyncWordsFromApi]
+  );
+
+  const handleSubmitReviewToApi = useCallback(async (payload: ReviewUpdatePayload) => {
+    const result = await apiPost<{ success: boolean; word: ApiWordItem }>('/review', payload, true);
+    return normalizeWordItem({
+      id: String(result.word.id),
+      word: result.word.word,
+      meaning: result.word.meaning,
+      level: result.word.level,
+      isDifficult: Boolean(result.word.isDifficult),
+      note: result.word.note ?? '',
+      nextReviewDate: result.word.nextReviewDate,
+      memoryLevel: result.word.memoryLevel,
+      forgetStreak: result.word.forgetStreak,
+      lastReviewedDate: result.word.lastReviewedDate ?? null,
+      reviewCount: result.word.reviewCount,
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthLoaded || !isLocalStateLoaded) {
+      return;
+    }
+
+    if (!user) {
+      previousUsernameRef.current = null;
+      setIsWordsLoaded(true);
+      void handleClearLocalWordState();
+      return;
+    }
+
+    const shouldResetLocalState =
+      previousUsernameRef.current !== null && previousUsernameRef.current !== user.username;
+    previousUsernameRef.current = user.username;
+    setIsWordsLoaded(false);
+
+    void (async () => {
+      try {
+        await AsyncStorage.removeItem(WORDS_STORAGE_KEY);
+      } catch {
+        // Ignore legacy cache cleanup errors and continue syncing from backend.
+      }
+
+      if (shouldResetLocalState) {
+        setWords([]);
+        setReviewSession(null);
+        setReviewHistory([]);
+        try {
+          await AsyncStorage.multiRemove([REVIEW_SESSION_STORAGE_KEY, REVIEW_HISTORY_STORAGE_KEY]);
+        } catch {
+          // Ignore cache cleanup errors and keep syncing from backend.
+        }
+      }
+
+      try {
+        await handleSyncWordsFromApi();
+      } finally {
+        setIsWordsLoaded(true);
+      }
+    })();
+  }, [handleClearLocalWordState, handleSyncWordsFromApi, isAuthLoaded, isLocalStateLoaded, user]);
 
   const ensureTodayReviewSession = () => {
     const today = getDateText(new Date());
@@ -204,37 +404,48 @@ export default function App() {
     });
   };
 
-  const handleSubmitReviewResult = (wordId: string, remembered: boolean) => {
+  const handleSubmitReviewResult = async (wordId: string, remembered: boolean) => {
     const today = getDateText(new Date());
+    const targetWord = words.find((item) => item.id === wordId);
+
+    if (!targetWord) {
+      return;
+    }
+
+    const nextWord = !remembered
+      ? {
+          ...targetWord,
+          memoryLevel: 1,
+          forgetStreak: targetWord.forgetStreak + 1,
+          reviewCount: targetWord.reviewCount + 1,
+          lastReviewedDate: today,
+          nextReviewDate: getDateText(addDays(new Date(), 1)),
+        }
+      : (() => {
+          const nextMemoryLevel = Math.min(targetWord.memoryLevel + 1, 5);
+          const interval = calculateRememberedInterval(nextMemoryLevel, targetWord.level);
+          return {
+            ...targetWord,
+            memoryLevel: nextMemoryLevel,
+            forgetStreak: Math.max(targetWord.forgetStreak - 1, 0),
+            reviewCount: targetWord.reviewCount + 1,
+            lastReviewedDate: today,
+            nextReviewDate: getDateText(addDays(new Date(), interval)),
+          };
+        })();
+
+    const persistedWord = await handleSubmitReviewToApi({
+      wordId: Number(targetWord.id),
+      memoryLevel: nextWord.memoryLevel,
+      forgetStreak: nextWord.forgetStreak,
+      reviewCount: nextWord.reviewCount,
+      lastReviewedDate: nextWord.lastReviewedDate,
+      nextReviewDate: nextWord.nextReviewDate,
+      isDifficult: nextWord.isDifficult,
+    });
 
     setWords((prev) =>
-      prev.map((item) => {
-        if (item.id !== wordId) {
-          return item;
-        }
-
-        if (!remembered) {
-          return {
-            ...item,
-            memoryLevel: 1,
-            forgetStreak: item.forgetStreak + 1,
-            reviewCount: item.reviewCount + 1,
-            lastReviewedDate: today,
-            nextReviewDate: getDateText(addDays(new Date(), 1)),
-          };
-        }
-
-        const nextMemoryLevel = Math.min(item.memoryLevel + 1, 5);
-        const interval = calculateRememberedInterval(nextMemoryLevel, item.level);
-        return {
-          ...item,
-          memoryLevel: nextMemoryLevel,
-          forgetStreak: Math.max(item.forgetStreak - 1, 0),
-          reviewCount: item.reviewCount + 1,
-          lastReviewedDate: today,
-          nextReviewDate: getDateText(addDays(new Date(), interval)),
-        };
-      })
+      prev.map((item) => (item.id === wordId ? persistedWord : item))
     );
 
     setReviewSession((prev) => {
@@ -257,6 +468,31 @@ export default function App() {
         forgottenCount: nextForgotten,
       };
     });
+
+    setReviewHistory((prev) => {
+      const existingIndex = prev.findIndex((item) => item.date === today);
+      if (existingIndex === -1) {
+        return [
+          ...prev,
+          {
+            date: today,
+            rememberedCount: remembered ? 1 : 0,
+            forgottenCount: remembered ? 0 : 1,
+          },
+        ];
+      }
+
+      return prev.map((item, index) => {
+        if (index !== existingIndex) {
+          return item;
+        }
+        return {
+          ...item,
+          rememberedCount: item.rememberedCount + (remembered ? 1 : 0),
+          forgottenCount: item.forgottenCount + (remembered ? 0 : 1),
+        };
+      });
+    });
   };
 
   const today = getDateText(new Date());
@@ -269,6 +505,18 @@ export default function App() {
     : buildReviewQueue(words).length;
   const todayRememberedCount = hasActiveTodaySession ? reviewSession.rememberedCount : 0;
   const todayForgottenCount = hasActiveTodaySession ? reviewSession.forgottenCount : 0;
+
+  if (!isAuthLoaded || !isLocalStateLoaded || !isWordsLoaded) {
+    return null;
+  }
+
+  if (!user) {
+    return authMode === 'login' ? (
+      <LoginScreen onGoRegister={() => setAuthMode('register')} />
+    ) : (
+      <RegisterScreen onGoLogin={() => setAuthMode('login')} />
+    );
+  }
 
   return (
     <NavigationContainer>
@@ -307,7 +555,16 @@ export default function App() {
           )}
         </Tab.Screen>
         <Tab.Screen name="Words" options={{ title: 'Words' }}>
-          {() => <WordsScreen words={words} />}
+          {() => (
+            <WordsScreen
+              words={words}
+              onToggleWordDifficult={handleToggleWordDifficultFromApi}
+              onSyncWordsFromApi={handleSyncWordsFromApi}
+            />
+          )}
+        </Tab.Screen>
+        <Tab.Screen name="History" options={{ title: 'History' }}>
+          {() => <HistoryScreen reviewHistory={reviewHistory} />}
         </Tab.Screen>
         <Tab.Screen
           name="AddWord"
@@ -317,8 +574,9 @@ export default function App() {
             <AddWordScreen
               words={words}
               editWordId={route.params?.editWordId}
-              onAddWord={handleAddWord}
-              onUpdateWord={handleUpdateWord}
+              onUpdateWord={handleUpdateWordFromApi}
+              onCreateWordFromApi={handleCreateWordFromApi}
+              onSyncWordsFromApi={handleSyncWordsFromApi}
             />
           )}
         </Tab.Screen>
@@ -336,5 +594,13 @@ export default function App() {
         </Tab.Screen>
       </Tab.Navigator>
     </NavigationContainer>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <MainApp />
+    </AuthProvider>
   );
 }
