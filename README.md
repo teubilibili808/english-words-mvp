@@ -55,6 +55,7 @@ npm run web
 ```
 
 ### 前端 API 环境变量
+- `.env` 是项目根目录下的前端环境变量文件
 - 前端默认从 `EXPO_PUBLIC_API_BASE` 读取后端地址
 - 本地开发可在项目根目录 `.env` 中配置：
 
@@ -63,6 +64,14 @@ EXPO_PUBLIC_API_BASE=http://localhost:3001/api
 ```
 
 - 如果未配置该环境变量，前端会默认使用 `http://localhost:3001/api`
+- 当前线上 API 地址已经切换为：
+
+```bash
+EXPO_PUBLIC_API_BASE=https://api.5353561.xyz/api
+```
+
+- 修改环境变量后需要重启前端
+- 将来如果 API 域名再次变化，只需要修改环境变量，不需要改业务源码
 - 未来部署到 VPS 或域名时，只需要修改环境变量，不再建议手动改源码里的 `localhost`
 
 ### 后端
