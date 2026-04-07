@@ -67,7 +67,7 @@ EXPO_PUBLIC_API_BASE=http://localhost:3001/api
 - 当前线上 API 地址已经切换为：
 
 ```bash
-EXPO_PUBLIC_API_BASE=https://api.5353561.xyz/api
+EXPO_PUBLIC_API_BASE=https://api.zzenglish.xyz/api
 ```
 
 - 修改环境变量后需要重启前端
