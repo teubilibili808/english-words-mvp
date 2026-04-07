@@ -3,6 +3,7 @@
     "name": "english-words-mvp",
     "slug": "english-words-mvp",
     "version": "1.0.0",
+    "platforms": ["ios", "android", "web"],
     "orientation": "portrait",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "light",
